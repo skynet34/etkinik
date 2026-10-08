@@ -17,7 +17,9 @@
       "supportsTablet": false,
       "infoPlist": {
         "CFBundleDevelopmentRegion": "tr",
-        "CFBundleLocalizations": ["tr"],
+        "CFBundleLocalizations": [
+          "tr"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -28,11 +30,17 @@
           "locationWhenInUsePermission": "Etkinik, iş yerinde olup olmadığınızı göstermek ve iş yeri konumunu kaydetmek için konumunuzu kullanır.",
           "locationAlwaysAndWhenInUsePermission": "Etkinik, uygulama kapalıyken iş yerinizden ayrıldığınızda size \"Çıkış yapmayı unutma\" hatırlatması gönderebilmek için konumunuzu kullanır. Konum bilgisi yalnızca telefonunuzda kalır, hiçbir yere gönderilmez.",
           "locationAlwaysPermission": "Etkinik, uygulama kapalıyken iş yerinizden ayrıldığınızda size \"Çıkış yapmayı unutma\" hatırlatması gönderebilmek için konumunuzu kullanır. Konum bilgisi yalnızca telefonunuzda kalır, hiçbir yere gönderilmez.",
-          "motionUsagePermission": false,
+          "motionUsagePermission": "Etkinik hareket verisi kullanmaz. Bu izin yalnızca konum kütüphanesinin bir parçası olduğu için listelenir.",
           "isIosBackgroundLocationEnabled": true
         }
       ],
       "expo-notifications"
-    ]
+    ],
+    "owner": "skynet34",
+    "extra": {
+      "eas": {
+        "projectId": "e3c36561-f23d-489a-a7ca-585901ecefa5"
+      }
+    }
   }
 }
