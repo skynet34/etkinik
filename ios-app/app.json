@@ -12,7 +12,7 @@
       "backgroundColor": "#f5f7f9"
     },
     "ios": {
-      "bundleIdentifier": "com.skynet34.etkinik",
+      "bundleIdentifier": "com.etkin.etkinik",
       "buildNumber": "1",
       "supportsTablet": false,
       "infoPlist": {
