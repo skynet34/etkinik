@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Etkinik — işe giriş ve çıkış yapmayı unutmamanız için hatırlatıcı.">
+  <meta name="theme-color" content="#f5f7f9">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Etkinik">
+  <title>Etkinik</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand">ETKİNİK</h1>
+    <button id="navBtn" class="link-btn" type="button">Ayarlar</button>
+  </header>
+
+  <main>
+    <!-- ANA EKRAN -->
+    <section id="viewHome" class="view">
+      <div id="alertBox" class="alert" role="alert" hidden>
+        <strong id="alertTitle"></strong>
+        <p id="alertBody"></p>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>BUGÜN</h2>
+          <span id="todayDate" class="muted small"></span>
+        </div>
+        <p id="wpLabel" class="muted small"></p>
+        <div class="times">
+          <div class="time-box">
+            <span class="label">Giriş</span>
+            <span id="entryTime" class="time">—</span>
+          </div>
+          <div class="time-box">
+            <span class="label">Çıkış</span>
+            <span id="exitTime" class="time">—</span>
+          </div>
+        </div>
+        <p id="dayStatus" class="status"></p>
+        <p id="dayHint" class="muted"></p>
+      </section>
+
+      <div class="actions">
+        <button id="btnEntry" class="btn btn-primary" type="button">Giriş yaptım</button>
+        <button id="btnExit" class="btn btn-secondary" type="button">Çıkış yaptım</button>
+      </div>
+
+      <section class="card">
+        <h2>Konum durumu</h2>
+        <p id="geoStatus" class="status"></p>
+        <dl id="geoDetails" class="kv">
+          <div><dt>Mesafe</dt><dd id="geoDistance">—</dd></div>
+          <div><dt>Alan</dt><dd id="geoRadius">—</dd></div>
+          <div><dt>Hassasiyet</dt><dd id="geoAccuracy">—</dd></div>
+          <div><dt>Son kontrol</dt><dd id="geoTime">—</dd></div>
+        </dl>
+        <p id="geoWarn" class="warn small" hidden></p>
+        <p id="geoError" class="error" hidden></p>
+        <button id="btnCheck" class="btn btn-outline" type="button">Konumumu kontrol et</button>
+        <button id="btnGoSettings" class="btn btn-outline" type="button" hidden>İş yeri konumunu ayarla</button>
+      </section>
+
+      <section id="notifyCard" class="card" hidden>
+        <h2>Bildirimler</h2>
+        <p id="notifyText" class="muted"></p>
+        <button id="btnNotify" class="btn btn-outline" type="button" hidden>Bildirimlere izin ver</button>
+      </section>
+
+      <p class="muted small footnote">
+        Etkinik yalnızca hatırlatır. Kolay İK'da giriş/çıkış işlemini kendiniz yapmalısınız.
+      </p>
+    </section>
+
+    <!-- AYARLAR -->
+    <section id="viewSettings" class="view" hidden>
+      <section class="card">
+        <h2>İş yerleri</h2>
+        <label for="wpSelect">Aktif iş yeri</label>
+        <select id="wpSelect"></select>
+        <div class="row">
+          <button id="btnAddWp" class="btn btn-outline btn-sm" type="button">Yeni iş yeri ekle</button>
+          <button id="btnDelWp" class="btn btn-outline btn-sm btn-danger" type="button">Bu iş yerini sil</button>
+        </div>
+      </section>
+
+      <form id="wpForm" class="card" novalidate>
+        <h2>İş yeri ayarları</h2>
+
+        <label for="fName">İş yeri adı</label>
+        <input id="fName" type="text" maxlength="40" autocomplete="off" placeholder="Merkez Ofis">
+        <p class="field-error" data-for="name"></p>
+
+        <div class="grid2">
+          <div>
+            <label for="fLat">Enlem</label>
+            <input id="fLat" type="text" inputmode="decimal" autocomplete="off" placeholder="41.008200">
+          </div>
+          <div>
+            <label for="fLon">Boylam</label>
+            <input id="fLon" type="text" inputmode="decimal" autocomplete="off" placeholder="28.978400">
+          </div>
+        </div>
+        <p class="field-error" data-for="coords"></p>
+        <button id="btnUseLoc" class="btn btn-outline" type="button">Mevcut konumumu iş yeri yap</button>
+        <p id="useLocMsg" class="small muted" hidden></p>
+
+        <label for="fRadius">Kapsama alanı</label>
+        <div class="radius-row">
+          <input id="fRadius" type="number" inputmode="numeric" min="10" max="300" step="1">
+          <span class="unit">m</span>
+        </div>
+        <input id="fRadiusRange" type="range" min="10" max="300" step="1" aria-label="Kapsama alanı kaydırıcı">
+        <div class="range-scale muted small"><span>10 m</span><span>300 m</span></div>
+        <p class="field-error" data-for="radius"></p>
+
+        <div class="grid2">
+          <div>
+            <label for="fStart">Mesai başlangıcı</label>
+            <input id="fStart" type="time">
+          </div>
+          <div>
+            <label for="fEnd">Mesai bitişi</label>
+            <input id="fEnd" type="time">
+          </div>
+        </div>
+        <p class="field-error" data-for="hours"></p>
+
+        <fieldset>
+          <legend>Hatırlatma yöntemi</legend>
+          <label class="radio"><input type="radio" name="fMode" value="location"> Yalnızca konum</label>
+          <label class="radio"><input type="radio" name="fMode" value="time"> Yalnızca saat</label>
+          <label class="radio"><input type="radio" name="fMode" value="both"> Konum + saat</label>
+        </fieldset>
+
+        <label for="fRepeat">Tekrar hatırlatma</label>
+        <select id="fRepeat">
+          <option value="0">Kapalı</option>
+          <option value="5">5 dakika</option>
+          <option value="10">10 dakika</option>
+          <option value="15">15 dakika</option>
+          <option value="30">30 dakika</option>
+        </select>
+
+        <button class="btn btn-primary" type="submit">Kaydet</button>
+        <p id="formMsg" class="error" hidden></p>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
