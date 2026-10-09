@@ -1,4 +1,4 @@
-name: Upload EtkinIK 1.1.0 (3) to TestFlight
+name: Upload EtkinIK 1.1.0 (4) to TestFlight
 
 # Manual only: uploads the approved existing build, without App Review submission.
 jobs:
@@ -6,5 +6,5 @@ jobs:
     name: Upload approved iOS build
     type: submit
     params:
-      build_id: 5797ef8b-ef3e-4fa9-9bd6-2d31dca72450
+      build_id: f1975d47-c451-4ca4-931f-92256ba63341
       profile: production
