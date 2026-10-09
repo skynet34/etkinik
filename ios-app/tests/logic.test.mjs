@@ -6,6 +6,33 @@ const L = await import(`data:text/javascript;base64,${Buffer.from(source).toStri
 const at = (hour, minute = 0, day = 9) => new Date(2026, 9, day, hour, minute).getTime();
 const wp = { ...L.newWorkplace('Test'), id: 'office', lat: 41, lon: 29 };
 const state = () => ({ enabled: true, days: {}, activeId: 'office', workplaces: [wp] });
+test('independent distance thresholds preserve the area between entry and exit', () => {
+ const w = { ...wp, entryRadius: 50, exitRadius: 200 };
+ const pos = meters => ({ lat:w.lat + meters / 111195, lon:w.lon, time:at(9) });
+ assert.equal(L.geoStatus(w,pos(25),at(9)).inside,true);
+ const between=L.geoStatus(w,pos(120),at(9));
+ assert.equal(between.inside,false); assert.equal(between.exitInside,true);
+ assert.equal(L.geoStatus(w,pos(250),at(9)).exitInside,false);
+});
+test('only the corresponding geofence event triggers each reminder', () => {
+ const w={ ...wp, entryRadius:50, exitRadius:200, mode:L.MODES.LOCATION }; const s=state();
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),false,at(9)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),true,at(9)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),true,at(9)),'entry');
+ L.markReminder(s,'entry',at(9));
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),false,at(17)),null);
+ assert.equal(L.regionReminder(s,w,'other:exit',false,at(17)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),false,at(17)),'exit');
+ L.markReminder(s,'exit',at(17));
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),false,at(17,1)),null);
+});
+test('radius fields save and validate independently', () => {
+ const f={ ...wp, lat:'41',lon:'29',entryRadius:'50',exitRadius:'200' };
+ const good=L.validateWorkplace(wp,f);
+ assert.equal(good.ok,true); assert.equal(good.wp.entryRadius,50); assert.equal(good.wp.exitRadius,200);
+ assert.ok(L.validateWorkplace(wp,{ ...f,entryRadius:'0' }).errors.entryRadius);
+ assert.ok(L.validateWorkplace(wp,{ ...f,exitRadius:'301' }).errors.exitRadius);
+});
 test('entry and exit are independent without attendance acknowledgement', () => {
  const s = state(); assert.equal(L.foregroundReminder(s, wp, at(9)), 'entry');
  L.markReminder(s, 'entry', at(9), true);

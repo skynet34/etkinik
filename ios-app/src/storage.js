@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { dateKey, newWorkplace, WORK_DAYS } from './logic';
+import { dateKey, newWorkplace, radiusFor, WORK_DAYS } from './logic';
 
 const KEY = 'etkinik.v2';
 const OLD_KEY = 'etkinik.v1';
@@ -23,7 +23,7 @@ export async function loadState() {
   }
   if (!Array.isArray(state.workplaces)) state.workplaces = [];
   if (!state.days || typeof state.days !== 'object') state.days = {};
-  state.workplaces = state.workplaces.map(({ repeat: _repeat, ...wp }) => ({ ...wp, workDays: wp.workDays || [...WORK_DAYS] }));
+  state.workplaces = state.workplaces.map(({ repeat: _repeat, ...wp }) => ({ ...wp, entryRadius: radiusFor(wp, 'entry'), exitRadius: radiusFor(wp, 'exit'), workDays: wp.workDays || [...WORK_DAYS] }));
   if (!state.workplaces.length) {
     const wp = newWorkplace('İş yerim');
     state.workplaces = [wp];

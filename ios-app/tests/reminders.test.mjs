@@ -24,7 +24,7 @@ async function runtime() {
   requestForegroundPermissionsAsync:async()=>({status:'granted'}),requestBackgroundPermissionsAsync:async()=>({status:'granted'}),
   hasStartedGeofencingAsync:async()=>geofencing,
   stopGeofencingAsync:async()=>{ calls.stopped++;geofencing=false; },
-  startGeofencingAsync:async()=>{geofencing=true;},
+  startGeofencingAsync:async(_task,regions)=>{calls.regions=regions;geofencing=true;},
  }));
  const load = async spec => {
   if (modules.has(spec)) return modules.get(spec);
@@ -39,6 +39,24 @@ async function runtime() {
  return { calls, saved, reminders:reminders.namespace, logic,storage };
 }
 
+test('native monitoring uses two separate reminder boundaries',async()=>{
+ const {reminders,logic,calls}=await runtime();
+ const wp={...logic.newWorkplace('Office'),id:'office',lat:41,lon:29,entryRadius:50,exitRadius:200};
+ await reminders.syncGeofencing({enabled:true,setupComplete:true,activeId:wp.id,workplaces:[wp],days:{}},{locationAlways:true});
+ assert.deepEqual(JSON.parse(JSON.stringify(calls.regions)),[
+  {identifier:'office:entry',latitude:41,longitude:29,radius:50,notifyOnEnter:true,notifyOnExit:false},
+  {identifier:'office:exit',latitude:41,longitude:29,radius:200,notifyOnEnter:false,notifyOnExit:true},
+ ]);
+});
+test('legacy v2 radius migrates and separate saved radii survive restart',async()=>{
+ const {storage,saved}=await runtime();
+ saved.set('etkinik.v2',JSON.stringify({activeId:'office',workplaces:[{id:'office',radius:75}]}));
+ let s=await storage.loadState();
+ assert.equal(s.workplaces[0].entryRadius,75);assert.equal(s.workplaces[0].exitRadius,75);
+ s.workplaces[0].entryRadius=40;s.workplaces[0].exitRadius=250;
+ await storage.saveState(s);s=await storage.loadState();
+ assert.equal(s.workplaces[0].entryRadius,40);assert.equal(s.workplaces[0].exitRadius,250);
+});
 test('queue schedules no more than 56 single alerts, with no repeat timer',async()=>{
  const {reminders,logic,calls} = await runtime();
  const wp={...logic.newWorkplace('Office'),id:'office',workDays:[0,1,2,3,4,5,6],mode:'time'};

@@ -2,7 +2,7 @@ import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Location from 'expo-location';
 import { activeWorkplace, saveState } from './storage';
-import { alertBody, alertTitle, dateKey, hasCoords, isWorkDay, reminderId, timeFor, usesLocation, usesTime } from './logic';
+import { alertBody, alertTitle, dateKey, hasCoords, isWorkDay, reminderId, timeFor, usesLocation, usesTime, workplaceRegions } from './logic';
 
 export const GEOFENCE_TASK = 'etkinik-geofence';
 export const SCHEDULE_DAYS = 28;
@@ -85,7 +85,7 @@ export async function syncGeofencing(state, permissions) {
     if (started) await Location.stopGeofencingAsync(GEOFENCE_TASK);
     return false;
   }
-  const regions = [{ identifier: wp.id, latitude: wp.lat, longitude: wp.lon, radius: wp.radius, notifyOnEnter: true, notifyOnExit: true }];
+  const regions = workplaceRegions(wp);
   // Avoid re-registering on every foreground: iOS reports initial state on registration.
   const signature = JSON.stringify(regions);
   if (!started || state.geofenceSignature !== signature) {

@@ -54,7 +54,8 @@ export function newWorkplace(name) {
     name: name || 'Merkez Ofis',
     lat: null,
     lon: null,
-    radius: RADIUS_DEFAULT,
+    entryRadius: RADIUS_DEFAULT,
+    exitRadius: RADIUS_DEFAULT,
     start: '08:30',
     end: '18:00',
     mode: MODES.BOTH,
@@ -125,9 +126,12 @@ export function validateWorkplace(base, v) {
     wp.lon = lon.value;
   }
 
-  const rErr = radiusError(v.radius);
-  if (rErr) errors.radius = rErr;
-  else wp.radius = Number(String(v.radius).trim());
+  for (const field of ['entryRadius', 'exitRadius']) {
+    const rErr = radiusError(v[field] ?? v.radius);
+    if (rErr) errors[field] = rErr;
+    else wp[field] = Number(String(v[field] ?? v.radius).trim());
+  }
+  delete wp.radius;
 
   const sMin = parseHHMM(v.start);
   const eMin = parseHHMM(v.end);
@@ -151,10 +155,12 @@ export function geoStatus(wp, pos, now) {
   if (!hasCoords(wp)) return { state: 'nocoords' };
   if (!pos) return { state: 'nodata' };
   const dist = distance(pos, { lat: wp.lat, lon: wp.lon });
-  const inside = dist <= wp.radius;
+  const inside = dist <= radiusFor(wp, 'entry');
+  const exitInside = dist <= radiusFor(wp, 'exit');
   return {
     state: inside ? 'inside' : 'outside',
     inside,
+    exitInside,
     distance: dist,
     accuracy: pos.accuracy,
     time: pos.time,
@@ -217,4 +223,26 @@ export function markReminder(state, kind, now = Date.now(), dismissed = false) {
   if (!state.days[key]) state.days[key] = {};
   state.days[key][kind] = { ...state.days[key][kind], delivered: now, dismissed };
   return state;
+}
+
+// Legacy single-radius settings retain their previous boundary for both reminders.
+export const radiusFor = (wp, kind) => wp[`${kind}Radius`] ?? wp.radius ?? RADIUS_DEFAULT;
+export const regionId = (wp, kind) => `${wp.id}:${kind}`;
+export function workplaceRegions(wp) {
+  return ['entry', 'exit'].map((kind) => ({
+    identifier: regionId(wp, kind), latitude: wp.lat, longitude: wp.lon,
+    radius: radiusFor(wp, kind),
+    notifyOnEnter: kind === 'entry', notifyOnExit: kind === 'exit',
+  }));
+}
+export function regionReminder(state, wp, identifier, entering, now = Date.now()) {
+  if (!state.enabled || state.setupComplete === false || !usesLocation(wp.mode)) return null;
+  if (identifier === regionId(wp, 'entry') && entering) {
+    const key = dateKey(new Date(now));
+    if (!state.days[key]) state.days[key] = {};
+    if (isWorkDay(wp, new Date(now))) state.days[key].seenInside = true;
+    return locationReminder(state, wp, 'enter', now);
+  }
+  if (identifier === regionId(wp, 'exit') && !entering) return locationReminder(state, wp, 'exit', now);
+  return null;
 }

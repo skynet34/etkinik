@@ -49,3 +49,7 @@ npx expo export --platform ios
 ```
 
 JS projede TypeScript `checkJs: false` ile yalnızca yapılandırma/sözdizimi denetimidir; kapsamlı statik tür doğrulaması değildir. Otomatik mantık ve bildirim kuyruğu testleri native cihaz testinin yerini tutmaz.
+# Ayrı kapsama ayarları
+
+Giriş ve çıkış kapsama alanları ayrı ayrı 10–300 metre arasında ayarlanır. Giriş bölgesine girme ve çıkış bölgesinden ayrılma bağımsız olarak izlenir. Önceki tek kapsama değeri ilk açılışta iki alana da aktarılır.
+

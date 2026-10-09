@@ -6,7 +6,7 @@ import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { MODES, MODE_LABELS, RADIUS_MIN, RADIUS_MAX, alertBody, alertTitle, dateKey, foregroundReminder, geoStatus,
-  hasCoords, locationReminder, markReminder, radiusError, usesLocation, usesTime, validateWorkplace, newWorkplace } from './src/logic';
+  hasCoords, locationReminder, markReminder, radiusError, radiusFor, usesLocation, usesTime, validateWorkplace, newWorkplace } from './src/logic';
 import { activeWorkplace, ensureDay, loadState, saveState } from './src/storage';
 import { serialize } from './src/operations';
 import { cancelTodayTime, dismissReminder, getPermissionSummary, isGeofencingActive, requestLocationPermissions,
@@ -77,10 +77,11 @@ function App() {
         try {
           const pos = await readPosition();
           next.lastPos = pos;
-          const inside = geoStatus(wp, pos, Date.now()).inside;
+          const { inside, exitInside } = geoStatus(wp, pos, Date.now());
           const day = ensureDay(next);
           if (inside) day.seenInside = true;
-          if (!kind && (inside || day.inside === true)) kind = locationReminder(next, wp, inside ? 'enter' : 'exit');
+          if (!kind && inside) kind = locationReminder(next, wp, 'enter');
+          if (!kind && !exitInside && day.seenInside) kind = locationReminder(next, wp, 'exit');
           day.inside = inside;
         } catch { /* Time-based reminders remain usable when location is unavailable. */ }
       }
@@ -209,7 +210,8 @@ function formFrom(wp) {
     name: wp.name,
     lat: hasCoords(wp) ? wp.lat.toFixed(6) : '',
     lon: hasCoords(wp) ? wp.lon.toFixed(6) : '',
-    radius: String(wp.radius),
+    entryRadius: String(radiusFor(wp, 'entry')),
+    exitRadius: String(radiusFor(wp, 'exit')),
     start: wp.start || '',
     end: wp.end || '',
     mode: wp.mode,
@@ -227,8 +229,6 @@ function Settings({ state, onChange, onSaved }) {
   useEffect(() => { setForm(formFrom(activeWorkplace(state))); setErrors({}); setLocMsg(null); }, [state.activeId]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const rNum = Number(form.radius);
-  const sliderVal = radiusError(form.radius) ? null : rNum;
 
   const useCurrent = async () => {
     setLocBusy(true);
@@ -237,7 +237,7 @@ function Settings({ state, onChange, onSaved }) {
       const pos = await readPosition();
       setForm((f) => ({ ...f, lat: pos.lat.toFixed(6), lon: pos.lon.toFixed(6) }));
       setErrors((e) => ({ ...e, coords: null }));
-      const r = sliderVal || 100;
+      const r = Math.min(...['entryRadius', 'exitRadius'].map((field) => radiusError(form[field]) ? 100 : Number(form[field])));
       let t = `Konum alındı (hassasiyet ±${Math.round(pos.accuracy)} m). Kaydetmek için "Kaydet"e basın.`;
       if (pos.accuracy > r) t += ` Hassasiyet kapsama alanından (${r} m) büyük; açık alanda tekrar denemeniz önerilir.`;
       setLocMsg({ text: t, warn: pos.accuracy > r });
@@ -276,7 +276,7 @@ function Settings({ state, onChange, onSaved }) {
         <Text style={styles.fieldLabel}>Aktif iş yeri</Text>
         <View style={styles.chips}>
           {state.workplaces.map((w) => (
-            <Chip key={w.id} label={`${w.name} (${w.radius} m)`} selected={w.id === wp.id}
+            <Chip key={w.id} label={`${w.name} (giriş ${radiusFor(w, 'entry')} m / çıkış ${radiusFor(w, 'exit')} m)`} selected={w.id === wp.id}
               onPress={() => onChange({ ...state, activeId: w.id })} />
           ))}
         </View>
@@ -314,30 +314,31 @@ function Settings({ state, onChange, onSaved }) {
           <Text style={[styles.small, locMsg.warn && styles.warnText, locMsg.error && styles.error]}>{locMsg.text}</Text>
         ) : null}
 
-        <Text style={styles.fieldLabel}>Kapsama alanı</Text>
-        <View style={styles.radiusRow}>
-          <TextInput
-            style={[styles.input, styles.radiusInput, errors.radius && styles.invalid]}
-            value={form.radius}
-            keyboardType="number-pad"
-            maxLength={3}
-            onChangeText={(v) => { set('radius', v.replace(/[^0-9]/g, '')); setErrors((e) => ({ ...e, radius: null })); }}
-            onBlur={() => setErrors((e) => ({ ...e, radius: radiusError(form.radius) }))}
-          />
-          <Text style={styles.unit}>m</Text>
-        </View>
-        <Slider
-          style={{ height: 40, marginTop: 6 }}
-          minimumValue={RADIUS_MIN}
-          maximumValue={RADIUS_MAX}
-          step={1}
-          value={sliderVal ?? wp.radius}
-          minimumTrackTintColor={C.primary}
-          maximumTrackTintColor={C.border}
-          onValueChange={(v) => { set('radius', String(Math.round(v))); setErrors((e) => ({ ...e, radius: null })); }}
-        />
-        <View style={styles.scale}><Text style={styles.small}>10 m</Text><Text style={styles.small}>300 m</Text></View>
-        <FieldError msg={errors.radius} />
+        {['entry', 'exit'].map((kind) => {
+          const field = `${kind}Radius`;
+          const update = (value) => { set(field, value); setErrors((e) => ({ ...e, [field]: null })); };
+          return (
+            <View key={kind}>
+              <Text style={styles.fieldLabel}>{kind === 'entry' ? 'Giriş kapsama alanı' : 'Çıkış kapsama alanı'}</Text>
+              <Text style={styles.small}>{kind === 'entry' ? 'Bu alanın içine girince giriş uyarısı verilir.' : 'Bu alanın dışına çıkınca çıkış uyarısı verilir.'}</Text>
+              <View style={styles.radiusRow}>
+                <TextInput accessibilityLabel={kind === 'entry' ? 'Giriş kapsama alanı, metre' : 'Çıkış kapsama alanı, metre'}
+                  style={[styles.input, styles.radiusInput, errors[field] && styles.invalid]}
+                  value={form[field]} keyboardType="number-pad" maxLength={3}
+                  onChangeText={(v) => update(v.replace(/[^0-9]/g, ''))}
+                  onBlur={() => setErrors((e) => ({ ...e, [field]: radiusError(form[field]) }))} />
+                <Text style={styles.unit}>m</Text>
+              </View>
+              <Slider accessibilityLabel={kind === 'entry' ? 'Giriş kapsama alanı' : 'Çıkış kapsama alanı'}
+                style={{ height: 40, marginTop: 6 }} minimumValue={RADIUS_MIN} maximumValue={RADIUS_MAX} step={1}
+                value={radiusError(form[field]) ? radiusFor(wp, kind) : Number(form[field])}
+                minimumTrackTintColor={C.primary} maximumTrackTintColor={C.border}
+                onValueChange={(v) => update(String(Math.round(v)))} />
+              <View style={styles.scale}><Text style={styles.small}>10 m</Text><Text style={styles.small}>300 m</Text></View>
+              <FieldError msg={errors[field]} />
+            </View>
+          );
+        })}
 
         <View style={styles.row2}>
           <View style={styles.flex}>
