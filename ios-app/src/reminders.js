@@ -72,7 +72,7 @@ export async function syncReminders(state, now = Date.now()) {
       }
     }
   }
-  state.timeSchedule = { workplaceId: wp.id, createdAt: now, days, until: new Date(new Date(now).setDate(new Date(now).getDate() + SCHEDULE_DAYS - 1)).getTime() };
+  state.timeSchedule = usesTime(wp.mode) ? { workplaceId: wp.id, createdAt: now, days, until: new Date(new Date(now).setDate(new Date(now).getDate() + SCHEDULE_DAYS - 1)).getTime() } : null;
   await saveState(state);
   const active = await syncGeofencing(state, permissions);
   return { count, active };

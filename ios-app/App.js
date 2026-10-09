@@ -5,9 +5,9 @@ import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
-import { MODES, MODE_LABELS, RADIUS_MIN, RADIUS_MAX, alertBody, alertTitle, dateKey, foregroundReminder, geoStatus,
-  hasCoords, locationReminder, markReminder, radiusError, radiusFor, usesLocation, usesTime, validateWorkplace, newWorkplace } from './src/logic';
-import { activeWorkplace, ensureDay, loadState, saveState } from './src/storage';
+import { MODES, MODE_LABELS, RADIUS_MIN, RADIUS_MAX, alertBody, alertTitle, dateKey, foregroundReminder,
+  hasCoords, positionReminder, markReminder, radiusError, radiusFor, usesLocation, usesTime, validateWorkplace, newWorkplace } from './src/logic';
+import { activeWorkplace, loadState, saveState } from './src/storage';
 import { serialize } from './src/operations';
 import { cancelTodayTime, dismissReminder, getPermissionSummary, isGeofencingActive, requestLocationPermissions,
   requestNotificationPermission, syncReminders } from './src/reminders';
@@ -77,13 +77,9 @@ function App() {
         try {
           const pos = await readPosition();
           next.lastPos = pos;
-          const { inside, exitInside } = geoStatus(wp, pos, Date.now());
-          const day = ensureDay(next);
-          if (inside) day.seenInside = true;
-          if (!kind && inside) kind = locationReminder(next, wp, 'enter');
-          if (!kind && !exitInside && day.seenInside) kind = locationReminder(next, wp, 'exit');
-          day.inside = inside;
-        } catch { /* Time-based reminders remain usable when location is unavailable. */ }
+          const locationKind = positionReminder(next, wp, pos);
+          if (!kind) kind = locationKind;
+        } catch { /* Location modes cannot notify without a location event. */ }
       }
       if (kind) await showReminder(next, kind);
       else {
@@ -361,6 +357,8 @@ function Settings({ state, onChange, onSaved }) {
             <Text style={styles.radioText}>{MODE_LABELS[m]}</Text>
           </Pressable>
         ))}
+
+        {usesLocation(form.mode) ? <Text style={styles.small}>Konum kullanılan yöntemlerde giriş: başlangıçtan 1 saat önce–14:00 arasında kapsama içine girince; çıkış: bitişten 1 saat önce–23:45 arasında kapsama dışına çıkınca. Saatin gelmesi tek başına uyarı oluşturmaz.</Text> : null}
 
         <Text style={styles.fieldLabel}>Çalışma günleri</Text>
         <View style={styles.chips}>

@@ -6,7 +6,7 @@ Bu sürüm giriş/çıkış kaydı tutmaz. Kullanıcı herhangi bir şirkete ba�
 - "Giriş yaptım" ve "Çıkış yaptım" butonları kaldırıldı.
 - Belirgin mavi giriş ve turuncu çıkış uyarısı ekrana dokunarak kapanır; ayrı kapatma butonu yoktur.
 - Aktif/Pasif anahtarı bekleyen bildirimleri ve geofencing'i durdurur.
-- Konum modunda ilk varış ve gün içinde gözlenen iş yeri ziyaretinden sonraki ayrılış hatırlatılır. Saat modunda iki mesai saati kullanılır. Konum + saat aynı gün aynı uyarıyı iki kez üretmez.
+- Konum modunda ilk varış ve gün içinde gözlenen iş yeri ziyaretinden sonraki ayrılış hatırlatılır. Saat modunda iki mesai saati kullanılır. Konum ve Konum + saat, kapsama geçişini saat aralığıyla birlikte kontrol eder: giriş başlangıçtan 1 saat önce–14:00, çıkış bitişten 1 saat önce–23:45 (son dakika dahil). Bu yöntemlerde saat tek başına uyarı üretmez. Erken geçişler daha sonra saat geldi diye yeniden tetiklenmez. Uygulama açıkken ilk konum ölçümü yalnızca başlangıç durumunu belirler; sonraki kapsama geçişleri uyarı oluşturur.
 - Çalışma günleri seçilebilir. Gece vardiyası desteklenmez.
 - Veriler telefondadır. Eski v1 verisi korunur, yalnızca iş yeri ayarları yeni sürüme aktarılır; eski giriş/çıkış kayıtları yeni arayüze taşınmaz.
 
@@ -52,4 +52,3 @@ JS projede TypeScript `checkJs: false` ile yalnızca yapılandırma/sözdizimi d
 # Ayrı kapsama ayarları
 
 Giriş ve çıkış kapsama alanları ayrı ayrı 10–300 metre arasında ayarlanır. Giriş bölgesine girme ve çıkış bölgesinden ayrılma bağımsız olarak izlenir. Önceki tek kapsama değeri ilk açılışta iki alana da aktarılır.
-

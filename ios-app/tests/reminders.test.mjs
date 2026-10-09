@@ -44,8 +44,8 @@ test('native monitoring uses two separate reminder boundaries',async()=>{
  const wp={...logic.newWorkplace('Office'),id:'office',lat:41,lon:29,entryRadius:50,exitRadius:200};
  await reminders.syncGeofencing({enabled:true,setupComplete:true,activeId:wp.id,workplaces:[wp],days:{}},{locationAlways:true});
  assert.deepEqual(JSON.parse(JSON.stringify(calls.regions)),[
-  {identifier:'office:entry',latitude:41,longitude:29,radius:50,notifyOnEnter:true,notifyOnExit:false},
-  {identifier:'office:exit',latitude:41,longitude:29,radius:200,notifyOnEnter:false,notifyOnExit:true},
+  {identifier:'office:entry',latitude:41,longitude:29,radius:50,notifyOnEnter:true,notifyOnExit:true},
+  {identifier:'office:exit',latitude:41,longitude:29,radius:200,notifyOnEnter:true,notifyOnExit:true},
  ]);
 });
 test('legacy v2 radius migrates and separate saved radii survive restart',async()=>{
@@ -88,4 +88,11 @@ test('v1 settings migrate without importing clock-in records or deleting origina
  const state=await storage.loadState();
  assert.equal(state.version,2);assert.equal(state.setupComplete,true);assert.equal(state.workplaces[0].repeat,undefined);
  assert.deepEqual(JSON.parse(JSON.stringify(state.days)),{});assert.equal(saved.get('etkinik.v1'),original);
+});
+
+test('both mode cancels legacy time notifications and only monitors location',async()=>{
+ const {reminders,logic,calls}=await runtime();const wp={...logic.newWorkplace('Office'),id:'office',lat:41,lon:29,mode:'both'};
+ const s={enabled:true,setupComplete:true,activeId:wp.id,workplaces:[wp],days:{},timeSchedule:{workplaceId:wp.id}};
+ const r=await reminders.syncReminders(s,new Date(2026,9,9,7).getTime());
+ assert.equal(calls.cancelled,1);assert.equal(calls.scheduled.length,0);assert.equal(s.timeSchedule,null);assert.equal(r.active,true);
 });
