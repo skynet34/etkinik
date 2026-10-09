@@ -1,55 +1,44 @@
-// Cihaz üzerinde saklama (sunucu yok). Arka plan görevleri de aynı veriyi okur.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { dateKey, newWorkplace } from './logic';
+import { dateKey, newWorkplace, WORK_DAYS } from './logic';
 
-const KEY = 'etkinik.v1';
-const KEEP_DAYS = 90;
-
-function defaults() {
-  return { version: 1, activeId: null, workplaces: [], days: {}, lastPos: null };
-}
+const KEY = 'etkinik.v2';
+const OLD_KEY = 'etkinik.v1';
+const defaults = () => ({ version: 2, enabled: true, setupComplete: false, activeId: null, workplaces: [], days: {}, lastPos: null, timeSchedule: null });
 
 export async function loadState() {
-  let s;
-  try {
-    const raw = await AsyncStorage.getItem(KEY);
-    s = raw ? { ...defaults(), ...JSON.parse(raw) } : defaults();
-  } catch (e) {
-    s = defaults();
+  let state = defaults();
+  const raw = await AsyncStorage.getItem(KEY);
+  if (raw) {
+    try { state = { ...state, ...JSON.parse(raw) }; } catch { /* Recover malformed local settings. */ }
+  } else {
+    const old = await AsyncStorage.getItem(OLD_KEY);
+    if (old) {
+      try {
+        const previous = JSON.parse(old);
+        state.workplaces = previous.workplaces || [];
+        state.activeId = previous.activeId;
+        state.setupComplete = previous.workplaces?.length > 0;
+      } catch { /* Use clean defaults. Original v1 data remains untouched. */ }
+    }
   }
-  if (!Array.isArray(s.workplaces)) s.workplaces = [];
-  if (!s.days || typeof s.days !== 'object') s.days = {};
-  if (!s.workplaces.length) {
-    const wp = newWorkplace('Merkez Ofis');
-    s.workplaces.push(wp);
-    s.activeId = wp.id;
+  if (!Array.isArray(state.workplaces)) state.workplaces = [];
+  if (!state.days || typeof state.days !== 'object') state.days = {};
+  state.workplaces = state.workplaces.map(({ repeat: _repeat, ...wp }) => ({ ...wp, workDays: wp.workDays || [...WORK_DAYS] }));
+  if (!state.workplaces.length) {
+    const wp = newWorkplace('İş yerim');
+    state.workplaces = [wp];
+    state.activeId = wp.id;
   }
-  if (!getWorkplace(s, s.activeId)) s.activeId = s.workplaces[0].id;
-  prune(s);
-  return s;
+  if (!getWorkplace(state, state.activeId)) state.activeId = state.workplaces[0].id;
+  const cut = new Date(); cut.setDate(cut.getDate() - 35);
+  for (const key of Object.keys(state.days)) if (key < dateKey(cut)) delete state.days[key];
+  return state;
 }
-
-export async function saveState(s) {
-  await AsyncStorage.setItem(KEY, JSON.stringify(s));
+export const saveState = (state) => AsyncStorage.setItem(KEY, JSON.stringify(state));
+export const getWorkplace = (state, id) => state.workplaces.find((wp) => wp.id === id) || null;
+export const activeWorkplace = (state) => getWorkplace(state, state.activeId) || state.workplaces[0];
+export function ensureDay(state, now = new Date()) {
+  const key = dateKey(now);
+  if (!state.days[key]) state.days[key] = {};
+  return state.days[key];
 }
-
-function prune(s) {
-  const cut = new Date();
-  cut.setDate(cut.getDate() - KEEP_DAYS);
-  const cutKey = dateKey(cut);
-  Object.keys(s.days).forEach((k) => { if (k < cutKey) delete s.days[k]; });
-}
-
-export const getWorkplace = (s, id) => s.workplaces.find((w) => w.id === id) || null;
-export const activeWorkplace = (s) => getWorkplace(s, s.activeId) || s.workplaces[0];
-export const todayRecord = (s) => s.days[dateKey()] || null;
-export function ensureToday(s) {
-  const k = dateKey();
-  if (!s.days[k]) s.days[k] = {};
-  return s.days[k];
-}
-/** Bugünkü hatırlatmalar: giriş yapılan iş yeri, yoksa aktif iş yeri */
-export const currentWorkplace = (s) => {
-  const rec = todayRecord(s);
-  return (rec && rec.workplaceId && getWorkplace(s, rec.workplaceId)) || activeWorkplace(s);
-};

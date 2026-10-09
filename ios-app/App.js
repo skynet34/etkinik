@@ -1,410 +1,207 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Alert, AppState, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { Alert, AppState, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, Vibration, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
+import { MODES, MODE_LABELS, RADIUS_MIN, RADIUS_MAX, alertBody, alertTitle, dateKey, foregroundReminder, geoStatus,
+  hasCoords, locationReminder, markReminder, radiusError, usesLocation, usesTime, validateWorkplace, newWorkplace } from './src/logic';
+import { activeWorkplace, ensureDay, loadState, saveState } from './src/storage';
+import { serialize } from './src/operations';
+import { cancelTodayTime, dismissReminder, getPermissionSummary, isGeofencingActive, requestLocationPermissions,
+  requestNotificationPermission, syncReminders } from './src/reminders';
 
-import {
-  MODES, MODE_LABELS, REPEAT_OPTIONS, RADIUS_MIN, RADIUS_MAX,
-  evaluate, exitMessage, entryMessage, fmtTime, fmtDistance, hasCoords,
-  radiusError, usesLocation, validateWorkplace, newWorkplace,
-} from './src/logic';
-import {
-  loadState, saveState, todayRecord, ensureToday, activeWorkplace, currentWorkplace,
-} from './src/storage';
-import {
-  getPermissionSummary, requestNotificationPermission, requestLocationPermissions,
-  scheduleTimeExitReminders, clearExitReminders, clearEntryReminders, syncGeofencing, isGeofencingActive,
-} from './src/reminders';
-
-const C = {
-  bg: '#f5f7f9', card: '#ffffff', text: '#1a1f24', muted: '#5b6670', border: '#dde2e7',
-  primary: '#1f5fbf', ok: '#1e7b46', warnBg: '#fff4e5', warnBorder: '#f0a020', warnText: '#6b3d00',
-  infoBg: '#eef4fc', infoBorder: '#9fbbe6', error: '#b42318',
-};
-
-const confirm = (title, message, okText = 'Evet') =>
-  new Promise((resolve) =>
-    Alert.alert(title, message, [
-      { text: 'Vazgeç', style: 'cancel', onPress: () => resolve(false) },
-      { text: okText, onPress: () => resolve(true) },
-    ])
-  );
-
+const DAY_LABELS = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+const C = { bg: '#f5f7f9', card: '#fff', text: '#1a1f24', muted: '#5b6670', border: '#dde2e7', primary: '#1f5fbf',
+  ok: '#1e7b46', warnBg: '#fff4e5', warnBorder: '#f0a020', warnText: '#6b3d00', infoBg: '#eef4fc', infoBorder: '#9fbbe6', error: '#b42318' };
+const confirm = (title, message, okText = 'Evet') => new Promise((resolve) => Alert.alert(title, message,
+  [{ text: 'Vazgeç', style: 'cancel', onPress: () => resolve(false) }, { text: okText, onPress: () => resolve(true) }]));
 function geoErrorMessage(e) {
-  if (e === 'denied') return 'Konum izni verilmedi. Ayarlar > Etkinik > Konum bölümünden izni açın.';
-  if (e === 'services') return 'Konum servisleri kapalı. Ayarlar > Gizlilik ve Güvenlik > Konum Servisleri\'ni açın.';
+  if (e === 'denied') return 'Konum izni verilmedi. Telefon ayarlarından EtkinIK için konum iznini açın.';
+  if (e === 'services') return 'Telefonun konum servisleri kapalı.';
   return 'Konum alınamadı. Açık bir alanda tekrar deneyin.';
 }
-
 async function readPosition() {
   if (!(await Location.hasServicesEnabledAsync())) throw 'services';
-  let p = await Location.getForegroundPermissionsAsync();
-  if (p.status !== 'granted') p = await Location.requestForegroundPermissionsAsync();
-  if (p.status !== 'granted') throw 'denied';
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
+  let permission = await Location.getForegroundPermissionsAsync();
+  if (permission.status !== 'granted') permission = await Location.requestForegroundPermissionsAsync();
+  if (permission.status !== 'granted') throw 'denied';
+  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
   return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy, time: Date.now() };
 }
-
-export default function Root() {
-  return (
-    <SafeAreaProvider>
-      <App />
-    </SafeAreaProvider>
-  );
-}
+export default function Root() { return <SafeAreaProvider><App /></SafeAreaProvider>; }
 
 function App() {
   const [state, setState] = useState(null);
-  const [view, setView] = useState('home');
-  const [now, setNow] = useState(Date.now());
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [perms, setPerms] = useState(null);
   const [geofence, setGeofence] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [geoError, setGeoError] = useState(null);
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
+  const [reminder, setReminder] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
   const stateRef = useRef(null);
+  const running = useRef(false);
+  const reminderRef = useRef(null);
+  const commit = useCallback(async (next) => { await saveState(next); stateRef.current = next; setState({ ...next }); }, []);
 
-  const showToast = (msg) => {
-    setToast(msg);
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 3000);
-  };
-
-  const commit = useCallback(async (s) => {
-    stateRef.current = s;
-    setState({ ...s });
-    await saveState(s);
-  }, []);
-
-  const refreshPerms = useCallback(async () => {
-    setPerms(await getPermissionSummary());
-    setGeofence(await isGeofencingActive());
-  }, []);
-
-  const checkLocation = useCallback(async ({ silent = false } = {}) => {
-    const s = stateRef.current;
-    if (!s) return;
-    const wp = currentWorkplace(s);
-    if (!hasCoords(wp)) {
-      if (!silent) setGeoError('İş yeri konumu ayarlanmamış. Önce Ayarlar\'dan iş yeri konumunu kaydedin.');
-      return;
-    }
-    setChecking(true);
-    try {
-      const pos = await readPosition();
-      const fresh = await loadState(); // arka plan görevi değiştirmiş olabilir
-      fresh.lastPos = pos;
-      const rec = todayRecord(fresh);
-      const ev = evaluate(fresh, currentWorkplace(fresh), rec, Date.now());
-      if (rec && rec.entry && !rec.exit && ev.geo.state === 'inside') rec.seenInside = true;
-      setGeoError(null);
-      await commit(fresh);
-    } catch (e) {
-      if (!silent || e === 'denied' || e === 'services') setGeoError(geoErrorMessage(e));
-    } finally {
-      setChecking(false);
-      setNow(Date.now());
-    }
+  const showReminder = useCallback(async (next, kind) => {
+    const day = dateKey();
+    const token = `${day}-${kind}`;
+    if (reminderRef.current?.token === token) return;
+    markReminder(next, kind);
+    await commit(next);
+    await cancelTodayTime(kind);
+    reminderRef.current = { kind, token, day };
+    setReminder(reminderRef.current);
+    Vibration.vibrate([0, 250, 100, 250]);
   }, [commit]);
 
-  const onForeground = useCallback(async () => {
-    const s = await loadState();
-    stateRef.current = s;
-    setState({ ...s });
-    await refreshPerms();
-    setNow(Date.now());
-    const wp = currentWorkplace(s);
-    const fg = await Location.getForegroundPermissionsAsync();
-    if (usesLocation(wp.mode) && hasCoords(wp) && fg.status === 'granted') checkLocation({ silent: true });
-  }, [refreshPerms, checkLocation]);
+  const refresh = useCallback(async (rebuild = false) => {
+    if (running.current) return;
+    running.current = true;
+    return serialize(async () => {
+    try {
+      const next = await loadState();
+      const permission = await getPermissionSummary();
+      setPerms(permission);
+      const wp = activeWorkplace(next);
+      // Reconcile local notifications received while the app was in the background.
+      const presented = await Notifications.getPresentedNotificationsAsync();
+      for (const item of presented) {
+        const data = item.request.content.data;
+        if (data?.day === dateKey() && ['entry', 'exit'].includes(data.kind) && !next.days[data.day]?.[data.kind]) markReminder(next, data.kind);
+      }
+      let kind = foregroundReminder(next, wp);
+      if (next.enabled && usesLocation(wp.mode) && hasCoords(wp) && permission.locationForeground) {
+        try {
+          const pos = await readPosition();
+          next.lastPos = pos;
+          const inside = geoStatus(wp, pos, Date.now()).inside;
+          const day = ensureDay(next);
+          if (inside) day.seenInside = true;
+          if (!kind && (inside || day.inside === true)) kind = locationReminder(next, wp, inside ? 'enter' : 'exit');
+          day.inside = inside;
+        } catch { /* Time-based reminders remain usable when location is unavailable. */ }
+      }
+      if (kind) await showReminder(next, kind);
+      else {
+        await commit(next);
+        if (!next.enabled || reminderRef.current?.day !== dateKey()) { reminderRef.current = null; setReminder(null); }
+      }
+      if (rebuild) { const result = await syncReminders(next); setGeofence(result.active); }
+      else setGeofence(await isGeofencingActive());
+    } catch { setError('Hatırlatmalar hazırlanamadı. İzinleri kontrol edip tekrar deneyin.'); }
+    finally { running.current = false; }
+    });
+  }, [commit, showReminder]);
 
   useEffect(() => {
-    onForeground();
-    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') onForeground(); });
-    const t = setInterval(() => setNow(Date.now()), 30000);
-    return () => { sub.remove(); clearInterval(t); };
-  }, [onForeground]);
+    refresh(true);
+    const foreground = AppState.addEventListener('change', (value) => { if (value === 'active') refresh(true); });
+    const received = Notifications.addNotificationReceivedListener(() => { if (AppState.currentState === 'active') refresh(); });
+    const opened = Notifications.addNotificationResponseReceivedListener(() => refresh());
+    const timer = setInterval(() => { if (AppState.currentState === 'active') refresh(); }, 15000);
+    return () => { foreground.remove(); received.remove(); opened.remove(); clearInterval(timer); };
+  }, [refresh]);
 
-  if (!state) return <View style={[styles.flex, { backgroundColor: C.bg }]} />;
-
-  /* ---------- Eylemler ---------- */
-
-  const onEntry = async () => {
-    const s = stateRef.current;
-    const existing = todayRecord(s);
-    if (existing && existing.entry) {
-      const msg = existing.exit
-        ? `Bugün giriş (${fmtTime(existing.entry)}) ve çıkış (${fmtTime(existing.exit)}) kayıtlı. Yeni giriş kaydedilirse çıkış kaydı silinir.`
-        : `Giriş zaten ${fmtTime(existing.entry)} olarak kaydedilmiş. Şimdi olarak güncellensin mi?`;
-      if (!(await confirm('Giriş kaydı', msg, 'Güncelle'))) return;
-    }
-    const wp = activeWorkplace(s);
-    const rec = ensureToday(s);
-    rec.entry = Date.now();
-    rec.exit = null;
-    rec.workplaceId = wp.id;
-    rec.seenInside = false;
-    rec.leftAt = null;
-    rec.backAt = null;
-    const ev = evaluate(s, wp, rec, rec.entry);
-    if (ev.geo.state === 'inside' && !ev.geo.stale) rec.seenInside = true;
-    await commit(s);
-    await clearEntryReminders();
-    await clearExitReminders();
-    const n = await scheduleTimeExitReminders(wp);
-    showToast(`Giriş kaydedildi: ${fmtTime(rec.entry)}${n ? ` · ${wp.end} hatırlatması kuruldu` : ''}`);
-    setGeofence((await syncGeofencing(s)).active);
-    if (usesLocation(wp.mode) && hasCoords(wp)) checkLocation({ silent: true });
-  };
-
-  const onExit = async () => {
-    const s = stateRef.current;
-    const existing = todayRecord(s);
-    if (!existing || !existing.entry) {
-      if (!(await confirm('Giriş kaydı yok', 'Bugün için giriş kaydı yok. Yine de çıkış saati kaydedilsin mi?', 'Kaydet'))) return;
-    } else if (existing.exit) {
-      if (!(await confirm('Çıkış kaydı', `Çıkış zaten ${fmtTime(existing.exit)} olarak kaydedilmiş. Şimdi olarak güncellensin mi?`, 'Güncelle'))) return;
-    }
-    const rec = ensureToday(s);
-    if (!rec.workplaceId) rec.workplaceId = activeWorkplace(s).id;
-    rec.exit = Date.now();
-    await commit(s);
-    await clearExitReminders();
-    showToast(`Çıkış kaydedildi: ${fmtTime(rec.exit)}`);
-  };
-
-  const askNotifications = async () => {
-    await requestNotificationPermission();
-    await refreshPerms();
-  };
-
+  const dismiss = () => serialize(async () => {
+    const current = reminderRef.current;
+    if (!current) return;
+    try {
+      const next = await loadState();
+      markReminder(next, current.kind, Date.now(), true);
+      await commit(next);
+      await cancelTodayTime(current.kind);
+      await dismissReminder(current.kind, current.day);
+      reminderRef.current = null; setReminder(null);
+    } catch { setError('Uyarı kapatılamadı. Tekrar dokunun.'); }
+  });
+  const apply = async (next) => serialize(async () => {
+    setBusy(true); setError(null);
+    try {
+      const latest = await loadState();
+      next = { ...latest, ...next, days: latest.days, timeSchedule: latest.timeSchedule, geofenceSignature: latest.geofenceSignature };
+      await commit(next);
+      const result = await syncReminders(next);
+      await commit(next);
+      setGeofence(result.active);
+      setPerms(await getPermissionSummary());
+      if (!next.enabled) { reminderRef.current = null; setReminder(null); }
+    } catch { setError('Ayarlar kaydedildi ancak hatırlatmalar hazırlanamadı. İzinleri kontrol edin.'); }
+    finally { setBusy(false); }
+  });
+  const askNotifications = async () => { try { await requestNotificationPermission(); await refresh(true); } catch { setError('Bildirim izni alınamadı.'); } };
   const askLocation = async () => {
-    if (perms && perms.locationAsked && !perms.locationAlways) {
-      Linking.openSettings();
-      return;
-    }
-    await requestLocationPermissions();
-    setGeofence((await syncGeofencing(stateRef.current)).active);
-    await refreshPerms();
+    try {
+      if (perms?.locationAsked && !perms.locationAlways) { await Linking.openSettings(); return; }
+      await requestLocationPermissions(); await refresh(true);
+    } catch { setError('Konum izni alınamadı.'); }
   };
-
-  /* ---------- Görünüm ---------- */
-
-  const rec = todayRecord(state);
-  const wp = currentWorkplace(state);
-  const ev = evaluate(state, wp, rec, now);
-
+  if (!state) return <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}><Text style={{ padding: 24 }}>EtkinIK hazırlanıyor…</Text></SafeAreaView>;
+  const wp = activeWorkplace(state);
+  const locationConfigured = hasCoords(wp);
   return (
-    <SafeAreaView style={[styles.flex, { backgroundColor: C.bg }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.flex, { backgroundColor: C.bg }]} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style="dark" />
       <View style={styles.topbar}>
-        <Text style={styles.brand}>ETKİNİK</Text>
-        <Pressable hitSlop={10} onPress={() => setView(view === 'home' ? 'settings' : 'home')}>
-          <Text style={styles.link}>{view === 'home' ? 'Ayarlar' : '← Ana ekran'}</Text>
+        <Text style={styles.brand}>EtkinIK</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Ayarlar" hitSlop={12} onPress={() => setSettingsOpen(!settingsOpen)}>
+          <Text style={styles.link}>{settingsOpen ? 'Kapat' : 'Ayarlar'}</Text>
         </Pressable>
       </View>
-
-      {view === 'home' ? (
-        <Home
-          ev={ev} wp={wp} rec={rec} perms={perms} geofence={geofence}
-          checking={checking} geoError={geoError}
-          onEntry={onEntry} onExit={onExit} onCheck={() => checkLocation()}
-          onSettings={() => setView('settings')}
-          onAskNotifications={askNotifications} onAskLocation={askLocation}
-        />
-      ) : (
-        <Settings
-          state={state}
-          onChange={async (s, msg) => {
-            await commit(s);
-            const p = await getPermissionSummary();
-            const awp = activeWorkplace(s);
-            if (usesLocation(awp.mode) && hasCoords(awp) && !p.locationAlways) await requestLocationPermissions();
-            if (!p.notificationsAsked) await requestNotificationPermission();
-            const r = todayRecord(s);
-            if (r && r.entry && !r.exit) await scheduleTimeExitReminders(currentWorkplace(s));
-            setGeofence((await syncGeofencing(s)).active);
-            await refreshPerms();
-            if (msg) showToast(msg);
-          }}
-          onSaved={() => {
-            setView('home');
-            const awp = activeWorkplace(stateRef.current);
-            if (usesLocation(awp.mode) && hasCoords(awp)) checkLocation({ silent: true });
-          }}
-        />
+      {settingsOpen ? <Settings state={state} onChange={apply} onSaved={() => setSettingsOpen(false)} /> : (
+        <ScrollView contentContainerStyle={styles.scroll}>
+          <View style={[styles.card, { padding: 24 }]}>
+            <Text style={[styles.small, { letterSpacing: 1.5 }]}>KİŞİSEL HATIRLATICINIZ</Text>
+            <Text style={{ fontSize: 32, fontWeight: '700', color: C.text, marginTop: 14 }}>{state.enabled ? 'Aklınız işinizde kalsın.' : 'Hatırlatmalar duraklatıldı.'}</Text>
+            <Text style={[styles.muted, { marginTop: 12, lineHeight: 24 }]}>İşe giriş ve işten çıkış işlemlerini zamanında hatırlayın. Gün içinde her uyarı bir kez gösterilir.</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 24 }}>
+              <Text style={{ fontSize: 18, fontWeight: '600', color: state.enabled ? C.ok : C.muted }}>{state.enabled ? 'Aktif' : 'Pasif'}</Text>
+              <Switch accessibilityLabel="Hatırlatmaları aktif yap" value={state.enabled} disabled={busy} onValueChange={(enabled) => apply({ ...stateRef.current, enabled })} trackColor={{ true: C.ok }} />
+            </View>
+          </View>
+          {!state.setupComplete ? <View style={[styles.card, styles.warnCard]}><Text style={styles.warnTitle}>İlk ayarları tamamlayın</Text><Text style={styles.warnText}>Çalışma saatlerinizi ve günlerinizi kaydedince hatırlatmalar başlayacak.</Text><Btn title="Ayarları aç" kind="outline" onPress={() => setSettingsOpen(true)} /></View> : null}
+          <View style={styles.card}>
+            <Text style={styles.h2}>{wp.name}</Text>
+            <Text style={{ fontSize: 28, fontWeight: '600', color: C.text, marginVertical: 12 }}>{wp.start} — {wp.end}</Text>
+            <Text style={styles.muted}>{MODE_LABELS[wp.mode]}</Text>
+            <Text style={[styles.small, { marginTop: 10 }]}>{wp.workDays.map((d) => DAY_LABELS[d]).join(' · ')}</Text>
+          </View>
+          {state.enabled && !perms?.notifications ? <View style={[styles.card, styles.warnCard]}>
+            <Text style={styles.warnTitle}>Bildirim izni gerekli</Text>
+            <Text style={styles.warnText}>Telefon kilitliyken de hatırlatma almak için bildirimlere izin verin.</Text>
+            <Btn title={perms?.notificationsAsked ? 'Telefon ayarlarını aç' : 'Bildirimlere izin ver'} kind="outline" onPress={perms?.notificationsAsked ? () => Linking.openSettings() : askNotifications} />
+          </View> : null}
+          {state.enabled && usesLocation(wp.mode) && (!locationConfigured || !perms?.locationAlways) ? <View style={[styles.card, styles.warnCard]}>
+            <Text style={styles.warnTitle}>{locationConfigured ? 'Konum izni gerekli' : 'İş yeri konumunu ayarlayın'}</Text>
+            <Text style={styles.warnText}>{locationConfigured ? 'Arka planda giriş ve çıkışı hatırlatmak için konum iznini “Her Zaman” yapın.' : 'Ayarlar bölümünde iş yeri konumunuzu kaydedin.'}</Text>
+            <Btn title={locationConfigured ? 'Konum iznini ayarla' : 'Ayarları aç'} kind="outline" onPress={locationConfigured ? askLocation : () => setSettingsOpen(true)} />
+          </View> : null}
+          <Text style={styles.small}>{state.enabled ? `Saat uyarıları: ${usesTime(wp.mode) && perms?.notifications ? 'açık' : 'kapalı'} · Konum uyarıları: ${geofence ? 'açık' : 'kapalı'}` : 'Bildirimler ve konum izleme kapalı.'}</Text>
+          {state.enabled && usesTime(wp.mode) && state.timeSchedule?.until ? <Text style={[styles.small, { marginTop: 10 }]}>Saat hatırlatmaları {new Date(state.timeSchedule.until).toLocaleDateString('tr-TR')} tarihine kadar hazır. Uygulamayı açınca sonraki 28 gün yenilenir.</Text> : null}
+          <Text style={[styles.small, { marginTop: 20 }]}>EtkinIK yalnızca hatırlatır. Giriş ve çıkış işlemlerini kullandığınız sistemde kendiniz yaparsınız. Verileriniz telefonunuzda kalır.</Text>
+          <Text style={[styles.small, { marginTop: 12 }]}>Sürüm 1.1.0</Text>
+        </ScrollView>
       )}
-
-      {toast ? (
-        <View style={styles.toast} pointerEvents="none">
-          <Text style={styles.toastText}>{toast}</Text>
-        </View>
-      ) : null}
+      {error ? <Text accessibilityRole="alert" style={{ padding: 16, color: C.error }}>{error}</Text> : null}
+      {busy ? <Text style={{ padding: 12, color: C.muted }}>Hatırlatmalar güncelleniyor…</Text> : null}
+      {reminder && state.enabled ? <Pressable accessibilityRole="button" accessibilityLabel={`${alertTitle(reminder.kind)} Uyarıyı kapatmak için dokunun.`} onPress={dismiss}
+        style={{ position: 'absolute', top: 70, bottom: 0, left: 0, right: 0, backgroundColor: reminder.kind === 'entry' ? '#154da7' : '#ad391c', padding: 32, justifyContent: 'center' }}>
+        <Text style={{ color: '#fff', fontSize: 52, fontWeight: '800', marginBottom: 24 }}>{reminder.kind === 'entry' ? 'GİRİŞ' : 'ÇIKIŞ'}</Text>
+        <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700', lineHeight: 38 }}>{alertTitle(reminder.kind)}</Text>
+        <Text style={{ color: '#fff', fontSize: 19, lineHeight: 29, marginTop: 18 }}>{alertBody(reminder.kind)}</Text>
+        <Text style={{ color: '#fff', fontSize: 15, marginTop: 50 }}>Uyarıyı kapatmak için ekrana dokunun.</Text>
+      </Pressable> : null}
     </SafeAreaView>
   );
 }
-
-/* ===================== Ana ekran ===================== */
-
-function Home({ ev, wp, rec, perms, geofence, checking, geoError, onEntry, onExit, onCheck, onSettings, onAskNotifications, onAskLocation }) {
-  const { hasEntry, hasExit, geo } = ev;
-  let status = 'Giriş yapılmadı';
-  let statusStyle = null;
-  let hint = 'İşe geldiğinizde İK uygulamanızda giriş yapın, ardından "Giriş yaptım"a basın.';
-  if (hasEntry && !hasExit) { status = 'Çıkış yapılmadı'; statusStyle = styles.out; hint = 'İşten ayrılırken çıkış yapmayı unutma.'; }
-  else if (hasEntry && hasExit) { status = 'Giriş ve çıkış kaydedildi'; statusStyle = styles.ok; hint = ''; }
-  else if (hasExit) { status = 'Çıkış kaydedildi (giriş kaydı yok)'; hint = ''; }
-
-  const dateText = new Date(ev.now).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
-  const entryPrimary = !hasEntry;
-  const needsAlways = usesLocation(wp.mode) && hasCoords(wp) && perms && !perms.locationAlways;
-
-  return (
-    <ScrollView contentContainerStyle={styles.scroll}>
-      {ev.exitDue ? (
-        <View style={styles.alert}>
-          <Text style={styles.alertTitle}>Çıkış yapmayı unutma!</Text>
-          <Text style={styles.alertBody}>{exitMessage(ev)}</Text>
-        </View>
-      ) : ev.entryDue ? (
-        <View style={[styles.alert, styles.alertEntry]}>
-          <Text style={[styles.alertTitle, { color: '#163a70', fontSize: 18 }]}>Giriş yapmayı unutma!</Text>
-          <Text style={[styles.alertBody, { color: '#163a70' }]}>{entryMessage(ev)}</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.card}>
-        <View style={styles.cardHead}>
-          <Text style={styles.h2}>BUGÜN</Text>
-          <Text style={styles.small}>{dateText}</Text>
-        </View>
-        <Text style={styles.small}>İş yeri: {wp.name} · {MODE_LABELS[wp.mode]}</Text>
-        <View style={styles.times}>
-          <View style={styles.timeBox}>
-            <Text style={styles.label}>Giriş</Text>
-            <Text style={styles.time}>{fmtTime(rec && rec.entry)}</Text>
-          </View>
-          <View style={styles.timeBox}>
-            <Text style={styles.label}>Çıkış</Text>
-            <Text style={styles.time}>{fmtTime(rec && rec.exit)}</Text>
-          </View>
-        </View>
-        <Text style={[styles.status, statusStyle]}>{status}</Text>
-        {hint ? <Text style={styles.muted}>{hint}</Text> : null}
-      </View>
-
-      <Btn title="Giriş yaptım" kind={entryPrimary ? 'primary' : 'secondary'} onPress={onEntry} />
-      <Btn title="Çıkış yaptım" kind={entryPrimary ? 'secondary' : 'primary'} onPress={onExit} />
-
-      {needsAlways ? (
-        <View style={[styles.card, styles.warnCard]}>
-          <Text style={styles.warnTitle}>Konum izni "Her Zaman" değil</Text>
-          <Text style={styles.warnText}>
-            Uygulama kapalıyken iş yerinden çıktığınızı algılayabilmesi için konum iznini "Her Zaman" yapın.
-          </Text>
-          <Btn
-            title={perms.locationAsked ? 'Ayarları aç' : 'Konum izni ver'}
-            kind="outline"
-            onPress={onAskLocation}
-          />
-        </View>
-      ) : null}
-
-      {perms && !perms.notifications ? (
-        <View style={[styles.card, styles.warnCard]}>
-          <Text style={styles.warnTitle}>Bildirimler kapalı</Text>
-          <Text style={styles.warnText}>Hatırlatmaların uygulama kapalıyken gelmesi için bildirim izni gerekli.</Text>
-          <Btn
-            title={perms.notificationsAsked ? 'Ayarları aç' : 'Bildirimlere izin ver'}
-            kind="outline"
-            onPress={perms.notificationsAsked ? () => Linking.openSettings() : onAskNotifications}
-          />
-        </View>
-      ) : null}
-
-      <View style={styles.card}>
-        <Text style={styles.h2}>Konum durumu</Text>
-        <GeoStatus geo={geo} wp={wp} checking={checking} now={ev.now} />
-        {usesLocation(wp.mode) && hasCoords(wp) ? (
-          <Text style={[styles.small, { marginTop: 8 }]}>
-            Arka plan takibi: {geofence ? 'açık' : 'kapalı'}
-          </Text>
-        ) : null}
-        {geoError ? <Text style={styles.error}>{geoError}</Text> : null}
-        {hasCoords(wp) ? (
-          <Btn title={checking ? 'Konum alınıyor…' : 'Konumumu kontrol et'} kind="outline" onPress={onCheck} disabled={checking} />
-        ) : usesLocation(wp.mode) ? (
-          <Btn title="İş yeri konumunu ayarla" kind="outline" onPress={onSettings} />
-        ) : null}
-      </View>
-
-      <Text style={[styles.small, styles.footnote]}>
-        Etkinik yalnızca hatırlatır. Giriş/çıkış işlemini İK uygulamanızda kendiniz yapmalısınız.
-      </Text>
-    </ScrollView>
-  );
-}
-
-function GeoStatus({ geo, wp, checking, now }) {
-  if (geo.state === 'nocoords') {
-    return (
-      <Text style={styles.status}>
-        {usesLocation(wp.mode) ? 'İş yeri konumu ayarlanmamış.' : 'Hatırlatma yöntemi "Yalnızca saat"; konum kullanılmıyor.'}
-      </Text>
-    );
-  }
-  if (geo.state === 'nodata') {
-    return <Text style={styles.status}>{checking ? 'Konum alınıyor…' : 'Henüz konum kontrolü yapılmadı.'}</Text>;
-  }
-  const ago = Math.floor((now - geo.time) / 60000);
-  const warns = [];
-  if (geo.stale) warns.push('Son ölçüm eski; güncel durum için "Konumumu kontrol et"e basın.');
-  if (geo.accuracy != null && geo.accuracy > wp.radius) {
-    warns.push(`Konum hassasiyeti (±${Math.round(geo.accuracy)} m) kapsama alanından (${wp.radius} m) büyük; sonuç yanıltıcı olabilir.`);
-  }
-  return (
-    <View>
-      <Text style={[styles.status, geo.inside ? styles.ok : styles.out]}>
-        {geo.inside ? 'İş yerindesiniz.' : 'İş yeri alanı dışındasınız.'}
-      </Text>
-      <View style={styles.kv}>
-        <KV k="Mesafe" v={fmtDistance(geo.distance)} />
-        <KV k="Alan" v={`${wp.radius} m`} />
-        <KV k="Hassasiyet" v={geo.accuracy != null ? `±${Math.round(geo.accuracy)} m` : '—'} />
-        <KV k="Son kontrol" v={ago < 1 ? 'az önce' : ago < 60 ? `${ago} dk önce` : fmtTime(geo.time)} />
-      </View>
-      {warns.length ? <Text style={[styles.warnText, { marginTop: 8 }]}>{warns.join(' ')}</Text> : null}
-    </View>
-  );
-}
-
-const KV = ({ k, v }) => (
-  <View style={styles.kvItem}>
-    <Text style={styles.kvKey}>{k}</Text>
-    <Text style={styles.kvVal}>{v}</Text>
-  </View>
-);
-
 function Btn({ title, kind = 'primary', onPress, disabled, small }) {
-  const s = kind === 'primary' ? styles.btnPrimary : kind === 'secondary' ? styles.btnSecondary : styles.btnOutline;
-  const t = kind === 'primary' ? styles.btnPrimaryText : kind === 'secondary' ? styles.btnSecondaryText : styles.btnOutlineText;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [styles.btn, small && styles.btnSmall, s, (pressed || disabled) && { opacity: 0.7 }]}
-    >
-      <Text style={[styles.btnText, small && { fontSize: 15 }, t]}>{title}</Text>
-    </Pressable>
-  );
+  return <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled}
+    style={[styles.btn, small && styles.btnSmall, kind === 'primary' ? styles.btnPrimary : styles.btnOutline, disabled && { opacity: 0.5 }]}>
+    <Text style={[styles.btnText, kind === 'primary' ? styles.btnPrimaryText : styles.btnOutlineText]}>{title}</Text>
+  </Pressable>;
 }
-
 /* ===================== Ayarlar ===================== */
 
 function formFrom(wp) {
@@ -416,7 +213,7 @@ function formFrom(wp) {
     start: wp.start || '',
     end: wp.end || '',
     mode: wp.mode,
-    repeat: wp.repeat,
+    workDays: wp.workDays,
   };
 }
 
@@ -455,7 +252,7 @@ function Settings({ state, onChange, onSaved }) {
     const res = validateWorkplace(wp, form);
     setErrors(res.errors);
     if (!res.ok) return;
-    const s = { ...state, workplaces: state.workplaces.map((w) => (w.id === res.wp.id ? res.wp : w)) };
+    const s = { ...state, setupComplete: true, workplaces: state.workplaces.map((w) => (w.id === res.wp.id ? res.wp : w)) };
     await onChange(s, 'Ayarlar kaydedildi.');
     onSaved();
   };
@@ -564,12 +361,14 @@ function Settings({ state, onChange, onSaved }) {
           </Pressable>
         ))}
 
-        <Text style={styles.fieldLabel}>Tekrar hatırlatma</Text>
+        <Text style={styles.fieldLabel}>Çalışma günleri</Text>
         <View style={styles.chips}>
-          {REPEAT_OPTIONS.map((r) => (
-            <Chip key={r} label={r === 0 ? 'Kapalı' : `${r} dk`} selected={form.repeat === r} onPress={() => set('repeat', r)} />
+          {DAY_LABELS.map((label, d) => (
+            <Chip key={d} label={label} selected={form.workDays.includes(d)}
+              onPress={() => set('workDays', form.workDays.includes(d) ? form.workDays.filter((day) => day !== d) : [...form.workDays, d])} />
           ))}
         </View>
+        <FieldError msg={errors.workDays} />
 
         <Btn title="Kaydet" onPress={save} />
         {Object.values(errors).some(Boolean) ? (
