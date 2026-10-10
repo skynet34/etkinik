@@ -5,7 +5,7 @@ export const RADIUS_MAX = 300;
 export const RADIUS_DEFAULT = 100;
 export const MODES = { LOCATION: 'location', TIME: 'time', BOTH: 'both' };
 export const MODE_LABELS = { location: 'Yalnızca konum', time: 'Yalnızca saat', both: 'Konum + saat' };
-export const REPEAT_OPTIONS = [0, 5, 10, 15, 30];
+export const WORK_DAYS = [1, 2, 3, 4, 5];
 export const GEO_FRESH_MS = 10 * 60 * 1000;
 
 export const pad = (n) => String(n).padStart(2, '0');
@@ -19,7 +19,8 @@ export const minutesOfDay = (d = new Date()) => d.getHours() * 60 + d.getMinutes
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 export const usesLocation = (mode) => mode === MODES.LOCATION || mode === MODES.BOTH;
-export const usesTime = (mode) => mode === MODES.TIME || mode === MODES.BOTH;
+// Location modes require a boundary event AND the permitted time window.
+export const usesTime = (mode) => mode === MODES.TIME;
 
 export function parseHHMM(s) {
   if (!/^\d{1,2}:\d{2}$/.test((s || '').trim())) return null;
@@ -54,11 +55,12 @@ export function newWorkplace(name) {
     name: name || 'Merkez Ofis',
     lat: null,
     lon: null,
-    radius: RADIUS_DEFAULT,
+    entryRadius: RADIUS_DEFAULT,
+    exitRadius: RADIUS_DEFAULT,
     start: '08:30',
     end: '18:00',
     mode: MODES.BOTH,
-    repeat: 10,
+    workDays: [...WORK_DAYS],
   };
 }
 
@@ -102,7 +104,7 @@ export function validateWorkplace(base, v) {
 
   wp.mode = Object.values(MODES).includes(v.mode) ? v.mode : MODES.BOTH;
   const needsLocation = wp.mode !== MODES.TIME;
-  const needsTime = wp.mode !== MODES.LOCATION;
+  const needsTime = true;
 
   const lat = parseCoord(v.lat);
   const lon = parseCoord(v.lon);
@@ -125,9 +127,12 @@ export function validateWorkplace(base, v) {
     wp.lon = lon.value;
   }
 
-  const rErr = radiusError(v.radius);
-  if (rErr) errors.radius = rErr;
-  else wp.radius = Number(String(v.radius).trim());
+  for (const field of ['entryRadius', 'exitRadius']) {
+    const rErr = radiusError(v[field] ?? v.radius);
+    if (rErr) errors[field] = rErr;
+    else wp[field] = Number(String(v[field] ?? v.radius).trim());
+  }
+  delete wp.radius;
 
   const sMin = parseHHMM(v.start);
   const eMin = parseHHMM(v.end);
@@ -141,8 +146,8 @@ export function validateWorkplace(base, v) {
   else if (needsTime && eMin == null) errors.hours = 'Mesai bitiş saatini girin.';
   else if (sMin != null && eMin != null && eMin <= sMin) errors.hours = 'Mesai bitişi başlangıçtan sonra olmalı (gece vardiyası bu sürümde desteklenmiyor).';
 
-  const rep = Number(v.repeat);
-  wp.repeat = REPEAT_OPTIONS.includes(rep) ? rep : 10;
+  wp.workDays = Array.isArray(v.workDays) ? [...new Set(v.workDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))] : [...WORK_DAYS];
+  if (!wp.workDays.length) errors.workDays = 'En az bir çalışma günü seçin.';
 
   return { ok: Object.keys(errors).length === 0, errors, wp };
 }
@@ -151,10 +156,12 @@ export function geoStatus(wp, pos, now) {
   if (!hasCoords(wp)) return { state: 'nocoords' };
   if (!pos) return { state: 'nodata' };
   const dist = distance(pos, { lat: wp.lat, lon: wp.lon });
-  const inside = dist <= wp.radius;
+  const inside = dist <= radiusFor(wp, 'entry');
+  const exitInside = dist <= radiusFor(wp, 'exit');
   return {
     state: inside ? 'inside' : 'outside',
     inside,
+    exitInside,
     distance: dist,
     accuracy: pos.accuracy,
     time: pos.time,
@@ -162,55 +169,101 @@ export function geoStatus(wp, pos, now) {
   };
 }
 
-/**
- * Saf karar fonksiyonu: hiçbir kayıt oluşturmaz.
- * state.lastPos: ön planda alınan son konum
- * rec.leftAt: arka plan geofencing'in bildirdiği son "alandan çıkış" zamanı
- */
-export function evaluate(state, wp, rec, now = Date.now()) {
-  const pos = state.lastPos;
+// Attendance is never inferred or recorded. Only reminder delivery/dismissal is tracked.
+export const alertTitle = (kind) => kind === 'entry' ? 'Giriş yapmayı unutma!' : 'Çıkış yapmayı unutma!';
+export const alertBody = (kind) => kind === 'entry'
+  ? 'İşe giriş işlemini kullandığınız sistemde tamamlamayı unutmayın.'
+  : 'İşten çıkış işlemini kullandığınız sistemde tamamlamayı unutmayın.';
+export const reminderId = (day, kind) => `etkinik-v2-${day}-${kind}`;
+export const isWorkDay = (wp, now = new Date()) => (wp.workDays || WORK_DAYS).includes(now.getDay());
+export const timeFor = (wp, kind, day = new Date()) => todayAt(kind === 'entry' ? wp.start : wp.end, day);
+export const dayStatus = (state, now = new Date()) => state.days[dateKey(now)] || {};
+
+export function canRemind(state, wp, kind, now = Date.now()) {
+  if (!state.enabled || state.setupComplete === false || !isWorkDay(wp, new Date(now))) return false;
+  const status = dayStatus(state, new Date(now))[kind];
+  return !status;
+}
+
+export function locationWindow(wp, kind, now = Date.now()) {
+  const minute = minutesOfDay(new Date(now));
+  const shiftMinute = parseHHMM(kind === 'entry' ? wp.start : wp.end);
+  const cutoff = kind === 'entry' ? 14 * 60 : 23 * 60 + 45;
+  return shiftMinute != null && minute >= Math.max(0, shiftMinute - 60) && minute <= cutoff;
+}
+
+export function locationReminder(state, wp, event, now = Date.now()) {
+  if (!usesLocation(wp.mode)) return null;
+  const kind = event === 'enter' ? 'entry' : event === 'exit' ? 'exit' : null;
+  if (!kind || !locationWindow(wp, kind, now) || !canRemind(state, wp, kind, now)) return null;
+  if (kind === 'exit' && !dayStatus(state, new Date(now)).seenInside) return null;
+  return kind;
+}
+
+// A foreground position is a sample, not an arrival/departure event.
+// Establish a baseline first; only subsequent boundary changes may notify.
+export function positionReminder(state, wp, pos, now = Date.now()) {
+  if (!state.enabled || state.setupComplete === false || !usesLocation(wp.mode)) return null;
   const geo = geoStatus(wp, pos, now);
-  const nowMin = minutesOfDay(new Date(now));
-  const startMin = parseHHMM(wp.start);
-  const endMin = parseHHMM(wp.end);
-  const hasEntry = !!(rec && rec.entry);
-  const hasExit = !!(rec && rec.exit);
-  const exitReasons = [];
-  const entryReasons = [];
-
-  if (hasEntry && !hasExit) {
-    if (usesLocation(wp.mode)) {
-      const fgOutside = rec.seenInside && geo.state === 'outside' && pos.time > rec.entry;
-      const bgOutside = !!rec.leftAt && rec.leftAt > rec.entry && !(rec.backAt && rec.backAt > rec.leftAt);
-      if (fgOutside || bgOutside) exitReasons.push('location');
-    }
-    if (usesTime(wp.mode) && endMin != null && nowMin >= endMin) exitReasons.push('time');
-  }
-
-  if (!hasEntry && !hasExit) {
-    if (usesLocation(wp.mode) && geo.state === 'inside' && !geo.stale) entryReasons.push('location');
-    if (usesTime(wp.mode) && startMin != null && endMin != null && nowMin >= startMin && nowMin < endMin) entryReasons.push('time');
-  }
-
-  return {
-    now, wp, rec, geo, hasEntry, hasExit, exitReasons, entryReasons,
-    exitDue: exitReasons.length > 0,
-    entryDue: entryReasons.length > 0,
-  };
+  if (geo.inside == null || geo.stale) return null;
+  const key = dateKey(new Date(now));
+  const day = state.days[key] ||= {};
+  const previous = day.location?.workplaceId === wp.id ? day.location : {};
+  const entered = previous.entryInside === false && geo.inside;
+  const exited = previous.exitInside === true && !geo.exitInside;
+  if (geo.inside && isWorkDay(wp, new Date(now))) day.seenInside = true;
+  day.location = { workplaceId: wp.id, entryInside: geo.inside, exitInside: geo.exitInside };
+  return (entered ? locationReminder(state, wp, 'enter', now) : null)
+    || (exited ? locationReminder(state, wp, 'exit', now) : null);
 }
 
-export function exitMessage(ev) {
-  const lines = ['Çıkış yapılmadı.'];
-  if (ev.exitReasons.includes('location')) lines.push('İş yerinden ayrılmış görünüyorsunuz.');
-  if (ev.exitReasons.includes('time')) lines.push(`Mesai bitiş saati (${ev.wp.end}) geldi.`);
-  lines.push('İK uygulamanızda çıkış yapmayı unutma.');
-  return lines.join('\n');
+export function foregroundReminder(state, wp, now = Date.now()) {
+  if (!state.enabled || state.setupComplete === false || !isWorkDay(wp, new Date(now))) return null;
+  const day = dayStatus(state, new Date(now));
+  // A location event already delivered its reminder while in the background.
+  for (const kind of ['exit', 'entry']) {
+    if (kind === 'entry' && now >= timeFor(wp, 'exit', new Date(now))) continue;
+    if (day[kind]?.delivered && !day[kind]?.dismissed) return kind;
+  }
+  if (!usesTime(wp.mode)) return null;
+  const start = timeFor(wp, 'entry', new Date(now));
+  const end = timeFor(wp, 'exit', new Date(now));
+  if (end != null && now >= end && canRemind(state, wp, 'exit', now)) return 'exit';
+  if (start != null && now >= start && now < end && canRemind(state, wp, 'entry', now)) return 'entry';
+  return null;
 }
 
-export function entryMessage(ev) {
-  const lines = [];
-  if (ev.entryReasons.includes('location')) lines.push(`${ev.wp.name} alanındasınız.`);
-  if (ev.entryReasons.includes('time')) lines.push(`Mesai ${ev.wp.start}'da başladı.`);
-  lines.push('İK uygulamanızda giriş yaptıysanız "Giriş yaptım"a basın.');
-  return lines.join('\n');
+export function markReminder(state, kind, now = Date.now(), dismissed = false) {
+  const key = dateKey(new Date(now));
+  if (!state.days[key]) state.days[key] = {};
+  state.days[key][kind] = { ...state.days[key][kind], delivered: now, dismissed };
+  return state;
+}
+
+// Legacy single-radius settings retain their previous boundary for both reminders.
+export const radiusFor = (wp, kind) => wp[`${kind}Radius`] ?? wp.radius ?? RADIUS_DEFAULT;
+export const regionId = (wp, kind) => `${wp.id}:${kind}`;
+export function workplaceRegions(wp) {
+  return ['entry', 'exit'].map((kind) => ({
+    identifier: regionId(wp, kind), latitude: wp.lat, longitude: wp.lon,
+    radius: radiusFor(wp, kind),
+    // Observe both directions to detect a later re-entry/re-exit correctly.
+    notifyOnEnter: true, notifyOnExit: true,
+  }));
+}
+export function regionReminder(state, wp, identifier, entering, now = Date.now()) {
+  if (!state.enabled || state.setupComplete === false || !usesLocation(wp.mode)) return null;
+  const kind = identifier === regionId(wp, 'entry') ? 'entry' : identifier === regionId(wp, 'exit') ? 'exit' : null;
+  if (!kind) return null;
+  const key = dateKey(new Date(now));
+  const day = state.days[key] ||= {};
+  const previous = day.location?.workplaceId === wp.id ? day.location : { workplaceId: wp.id };
+  const field = `${kind}Inside`;
+  const duplicate = previous[field] === entering;
+  day.location = { ...previous, [field]: entering };
+  if (kind === 'entry' && entering && isWorkDay(wp, new Date(now))) day.seenInside = true;
+  if (duplicate) return null;
+  if (kind === 'entry' && entering) return locationReminder(state, wp, 'enter', now);
+  if (kind === 'exit' && !entering) return locationReminder(state, wp, 'exit', now);
+  return null;
 }

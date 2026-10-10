@@ -1,0 +1,127 @@
+import { readFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+const source = await readFile(new URL('../src/logic.js', import.meta.url), 'utf8');
+const L = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const at = (hour, minute = 0, day = 9) => new Date(2026, 9, day, hour, minute).getTime();
+const wp = { ...L.newWorkplace('Test'), id: 'office', lat: 41, lon: 29 };
+const state = () => ({ enabled: true, days: {}, activeId: 'office', workplaces: [wp] });
+test('independent distance thresholds preserve the area between entry and exit', () => {
+ const w = { ...wp, entryRadius: 50, exitRadius: 200 };
+ const pos = meters => ({ lat:w.lat + meters / 111195, lon:w.lon, time:at(9) });
+ assert.equal(L.geoStatus(w,pos(25),at(9)).inside,true);
+ const between=L.geoStatus(w,pos(120),at(9));
+ assert.equal(between.inside,false); assert.equal(between.exitInside,true);
+ assert.equal(L.geoStatus(w,pos(250),at(9)).exitInside,false);
+});
+test('only the corresponding geofence event triggers each reminder', () => {
+ const w={ ...wp, entryRadius:50, exitRadius:200, mode:L.MODES.LOCATION }; const s=state();
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),false,at(9)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),true,at(9)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),true,at(9)),'entry');
+ L.markReminder(s,'entry',at(9));
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),false,at(17)),null);
+ assert.equal(L.regionReminder(s,w,'other:exit',false,at(17)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),false,at(17)),'exit');
+ L.markReminder(s,'exit',at(17));
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'exit'),false,at(17,1)),null);
+});
+test('radius fields save and validate independently', () => {
+ const f={ ...wp, lat:'41',lon:'29',entryRadius:'50',exitRadius:'200' };
+ const good=L.validateWorkplace(wp,f);
+ assert.equal(good.ok,true); assert.equal(good.wp.entryRadius,50); assert.equal(good.wp.exitRadius,200);
+ assert.ok(L.validateWorkplace(wp,{ ...f,entryRadius:'0' }).errors.entryRadius);
+ assert.ok(L.validateWorkplace(wp,{ ...f,exitRadius:'301' }).errors.exitRadius);
+});
+test('entry and exit are independent without attendance acknowledgement', () => {
+ const s = state(); const wp = { ...s.workplaces[0], mode: L.MODES.TIME }; assert.equal(L.foregroundReminder(s, wp, at(9)), 'entry');
+ L.markReminder(s, 'entry', at(9), true);
+ assert.equal(L.foregroundReminder(s, wp, at(10)), null);
+ assert.equal(L.foregroundReminder(s, wp, at(18)), 'exit');
+ L.markReminder(s, 'exit', at(18), true);
+ assert.equal(L.foregroundReminder(s, wp, at(19)), null);
+ assert.equal(L.foregroundReminder(s, wp, at(9,0,12)), 'entry');
+});
+test('passive disables all foreground and geofence reminders', () => {
+ const s = { ...state(), enabled: false };
+ assert.equal(L.foregroundReminder(s, wp, at(18)), null);
+ assert.equal(L.locationReminder(s, wp, 'enter', at(9)), null);
+});
+test('weekends do not trigger', () => {
+ assert.equal(L.foregroundReminder(state(), wp, at(9,0,10)), null);
+ assert.equal(L.locationReminder(state(), wp, 'enter', at(9,0,10)), null);
+});
+test('departure does not require a clock-in button but requires a visit', () => {
+ const s = state(); assert.equal(L.locationReminder(s, wp, 'exit', at(17)), null);
+ s.days[L.dateKey(new Date(at(9)))] = { seenInside: true };
+ assert.equal(L.locationReminder(s, wp, 'exit', at(17)), 'exit');
+ L.markReminder(s, 'exit', at(17));
+ assert.equal(L.locationReminder(s, wp, 'exit', at(17,1)), null);
+});
+test('arrival is limited to the work window', () => {
+ assert.equal(L.locationReminder(state(), wp, 'enter', at(6)), null);
+ assert.equal(L.locationReminder(state(), wp, 'enter', at(7)), null);
+ assert.equal(L.locationReminder(state(), wp, 'enter', at(7,30)), 'entry');
+ assert.equal(L.locationReminder(state(), wp, 'enter', at(18)), null);
+});
+test('old time schedule does not suppress a valid location exit', () => {
+ const s = state(); const key = L.dateKey(new Date(at(9)));
+ s.days[key] = { seenInside: true };
+ s.timeSchedule = { workplaceId: wp.id, createdAt: at(8), days: [key] };
+ assert.equal(L.locationReminder(s, wp, 'exit', at(18,1)), 'exit');
+ assert.equal(L.locationReminder(s, wp, 'exit', at(17)), 'exit');
+});
+test('location-only does not raise a time alarm', () => {
+ assert.equal(L.foregroundReminder(state(), { ...wp, mode: L.MODES.LOCATION }, at(18)), null);
+});
+test('dismissal closes the alert without recording attendance', () => {
+ const s = state(); L.markReminder(s, 'entry', at(9));
+ assert.equal(L.foregroundReminder(s, wp, at(10)), 'entry');
+ L.markReminder(s, 'entry', at(10), true);
+ assert.equal(L.foregroundReminder(s, wp, at(11)), null);
+ const day = s.days[L.dateKey(new Date(at(9)))];
+ assert.equal(day.entry.dismissed, true); assert.equal(day.exit, undefined);
+});
+test('validation rejects missing hours and overnight shift for every mode', () => {
+ const form = { ...wp, radius: '100', lat: '41', lon: '29', start: '', end: '', mode: L.MODES.LOCATION };
+ assert.equal(L.validateWorkplace(wp,form).ok, false);
+ assert.equal(L.validateWorkplace(wp,{ ...form, start:'22:00',end:'06:00' }).ok,false);
+ assert.equal(L.validateWorkplace(wp,{ ...form, start:'08:30',end:'18:00',workDays:[] }).ok,false);
+ assert.equal(L.validateWorkplace(wp,{ ...form, start:'08:30',end:'18:00' }).ok,true);
+});
+
+for (const mode of [L.MODES.LOCATION, L.MODES.BOTH]) {
+ test(`${mode}: entry window boundaries`, () => {
+  const w={...wp,start:'09:00',end:'18:00',mode};
+  for (const [h,m,want] of [[7,59,null],[8,0,'entry'],[8,59,'entry'],[9,1,'entry'],[14,0,'entry'],[14,1,null]])
+   assert.equal(L.locationReminder(state(),w,'enter',at(h,m)),want,`${h}:${m}`);
+ });
+ test(`${mode}: exit window uses shift end and ends at 23:45`, () => {
+  const w={...wp,start:'09:00',end:'18:00',mode};const s=state();s.days[L.dateKey(new Date(at(9)))]={seenInside:true};
+  for (const [h,m,want] of [[9,0,null],[16,59,null],[17,0,'exit'],[18,1,'exit'],[23,45,'exit'],[23,46,null]])
+   assert.equal(L.locationReminder(s,w,'exit',at(h,m)),want,`${h}:${m}`);
+  assert.equal(L.locationReminder(state(),w,'exit',at(18)),null);
+ });
+ test(`${mode}: shift time alone never raises an alarm`,()=>{
+  assert.equal(L.foregroundReminder(state(),{...wp,mode},at(9)),null);
+  assert.equal(L.foregroundReminder(state(),{...wp,mode},at(18)),null);
+ });
+}
+test('foreground requires transitions; early crossing is not delayed to window opening',()=>{
+ const w={...wp,start:'09:00',end:'18:00',mode:L.MODES.BOTH};const s=state();
+ const sample=(m,h,min=0)=>L.positionReminder(s,w,{lat:w.lat+m/111195,lon:w.lon,time:at(h,min)},at(h,min));
+ assert.equal(sample(250,7),null);assert.equal(sample(0,7,30),null);assert.equal(sample(0,8),null);
+ assert.equal(sample(250,12),null);assert.equal(sample(250,17),null);
+ assert.equal(sample(0,13),'entry');L.markReminder(s,'entry',at(13),true);
+ assert.equal(sample(250,17,1),'exit');
+});
+test('duplicate native early arrival is not retriggered at window opening',()=>{
+ const s=state();const w={...wp,start:'09:00'};
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),true,at(7)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),true,at(8)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),false,at(8)),null);
+ assert.equal(L.regionReminder(s,w,L.regionId(w,'entry'),true,at(8,1)),'entry');
+});
+test('entry window after cutoff is empty',()=>{
+ assert.equal(L.locationReminder(state(),{...wp,start:'16:00'},'enter',at(15)),null);
+});

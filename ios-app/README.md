@@ -1,42 +1,54 @@
-# Etkinik — iPhone uygulaması
+# EtkinIK 1.1 — iPhone kişisel hatırlatıcı
 
-Web/PWA sürümünün native iPhone karşılığı. Fark: **uygulama kapalıyken de** hatırlatır.
+Bu sürüm giriş/çıkış kaydı tutmaz. Kullanıcı herhangi bir şirkete bağlı olmadan iş yeri, mesai saatleri ve çalışma günlerini seçer.
 
-| Durum | Ne olur |
-|---|---|
-| "Giriş yaptım" | Mesai bitişinde (ve tekrar süresi aralıklarla 3 saat boyunca) çıkış bildirimi telefona zamanlanır |
-| İş yeri alanından çıkış | iOS bölge izleme uygulamayı arka planda uyandırır; giriş var/çıkış yoksa anında bildirim + tekrarlar |
-| Alana geri dönüş | Konum kaynaklı tekrarlar durur |
-| "Çıkış yaptım" | Tüm bekleyen ve ekrandaki çıkış bildirimleri silinir |
-| Sabah alana giriş (giriş kaydı yoksa) | Günde bir kez "Giriş yapmayı unutma!" |
+- Giriş ve çıkış için günde birer hatırlatma; 5/10/15/30 dakika tekrarları kaldırıldı.
+- "Giriş yaptım" ve "Çıkış yaptım" butonları kaldırıldı.
+- Belirgin mavi giriş ve turuncu çıkış uyarısı ekrana dokunarak kapanır; ayrı kapatma butonu yoktur.
+- Aktif/Pasif anahtarı bekleyen bildirimleri ve geofencing'i durdurur.
+- Konum modunda ilk varış ve gün içinde gözlenen iş yeri ziyaretinden sonraki ayrılış hatırlatılır. Saat modunda iki mesai saati kullanılır. Konum ve Konum + saat, kapsama geçişini saat aralığıyla birlikte kontrol eder: giriş başlangıçtan 1 saat önce–14:00, çıkış bitişten 1 saat önce–23:45 (son dakika dahil). Bu yöntemlerde saat tek başına uyarı üretmez. Erken geçişler daha sonra saat geldi diye yeniden tetiklenmez. Uygulama açıkken ilk konum ölçümü yalnızca başlangıç durumunu belirler; sonraki kapsama geçişleri uyarı oluşturur.
+- Çalışma günleri seçilebilir. Gece vardiyası desteklenmez.
+- Veriler telefondadır. Eski v1 verisi korunur, yalnızca iş yeri ayarları yeni sürüme aktarılır; eski giriş/çıkış kayıtları yeni arayüze taşınmaz.
 
-Uygulama hiçbir zaman kendiliğinden giriş/çıkış kaydı oluşturmaz. Sunucu yok; veriler telefonda (AsyncStorage).
+## iPhone’da deneme
 
-## Yapı
-
-- `src/logic.js` — doğrulama ve karar mantığı (web sürümüyle aynı kurallar)
-- `src/storage.js` — cihaz üzerinde saklama
-- `src/reminders.js` — yerel bildirimler + geofencing (iOS katmanı)
-- `src/tasks.js` — arka plan geofencing görevi (uygulama kapalıyken çalışır)
-- `App.js` — ana ekran ve ayarlar
-
-## Derleme (Mac gerekmez)
+Gerçek bildirim/geofencing testi için imzalı native build gerekir; Expo Go tam test için yeterli değildir.
 
 ```bash
-npm install
+npm ci
 npx eas-cli@latest login
-npx eas-cli@latest build -p ios --profile production --auto-submit
+npx eas-cli@latest build -p ios --profile production
 ```
 
-Build Expo'nun sunucularında yapılır, `--auto-submit` App Store Connect'e (TestFlight) yükler.
+Bu komut yalnızca EAS build oluşturur. App Store Connect/TestFlight'a yükleme yapmaz. Mevcut `com.etkin.etkinik` kimliği ve EAS projesi korunur. Yeni sürüm `1.1.0`; EAS uzak build numarasını otomatik artırır.
 
-## Gereken izinler
+Kullanıcının ayrıca açık onayı alınmadan `eas submit`, `--auto-submit`, `eas update` veya App Review yeniden gönderimi yapılmamalıdır.
 
-- Konum: **Her Zaman** (uygulama kapalıyken alandan çıkışı algılamak için)
-- Bildirimler
+## Test adımları
 
-## Sınırlamalar
+1. Güncel iOS yüklü fiziksel iPhone’a yeni build kurulur.
+2. Ayarlar açılır; çalışma günü, başlangıç/bitiş saatleri, yöntem ve iş yeri kaydedilir.
+3. Saat testi için iki saat de geleceğe, örneğin 2 ve 4 dakika sonrasına ayarlanır. Bildirim izni verilir; telefon kilitliyken iki uyarı denenir.
+4. Uygulama açıkken uyarıya dokunulur; aynı gün yeniden gösterilmemesi kontrol edilir.
+5. Konum testi için Her Zaman izni verilir. İş yeri alanına varış/ayrılış gerçek cihazla denenir. iOS bölge olayları tam sınırda veya hemen gelmeyebilir.
+6. Pasif yapılır; kilitliyken saat ve konum uyarısı gelmediği kontrol edilir. Yeniden aktifleştirme denenir.
+7. Çalışılmayan gün, konum/bildirim izni reddi ve gün değişimi kontrol edilir.
+8. Apple videosu simgeden açılışla başlar; ayarlar, iki uyarı, dokunarak kapatma ve Pasif akışı gösterilir. Cihaz modeli/iOS sürümü belirtilir.
 
-- iOS bölge izleme hücresel/Wi-Fi verisine dayanır; çıkış bildirimi genellikle alandan **birkaç yüz metre ve 1–3 dakika** sonra gelir. 100 m altındaki kapsama alanları iOS tarafında yaklaşık olarak uygulanır.
-- Kullanıcı uygulamayı uygulama değiştiriciden yukarı kaydırıp kapatırsa iOS bölge olaylarını yine iletir; ancak telefon yeniden başlatıldıktan sonra ilk kilit açılışına kadar olay gelmez.
-- Düşük Güç Modu bildirimleri geciktirebilir.
+## Saat bildirimlerinin kapsamı
+
+Saat bildirimleri en fazla 28 gün ileriye, her çalışma günü için tek giriş ve tek çıkış olarak kurulur (en fazla 56 bekleyen bildirim). Uygulamayı açınca bu pencere yenilenir; son tarih ana ekranda gösterilir. 28 gün hiç açılmazsa saat bildirimleri sona erer. Geofencing'in böyle bir tarih sınırı yoktur. Bu sınır fiziksel cihaz QA’da doğrulanmalı; sınırsız çalışma iddiası yapılmamalıdır.
+
+## Kontroller
+
+```bash
+npm test
+npx expo lint
+npx tsc --noEmit
+npx expo export --platform ios
+```
+
+JS projede TypeScript `checkJs: false` ile yalnızca yapılandırma/sözdizimi denetimidir; kapsamlı statik tür doğrulaması değildir. Otomatik mantık ve bildirim kuyruğu testleri native cihaz testinin yerini tutmaz.
+# Ayrı kapsama ayarları
+
+Giriş ve çıkış kapsama alanları ayrı ayrı 10–300 metre arasında ayarlanır. Giriş bölgesine girme ve çıkış bölgesinden ayrılma bağımsız olarak izlenir. Önceki tek kapsama değeri ilk açılışta iki alana da aktarılır.

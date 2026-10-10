@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Etkinik",
+    "name": "EtkinIK",
     "slug": "etkinik",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -13,7 +13,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.etkin.etkinik",
-      "buildNumber": "1",
+      "buildNumber": "3",
       "supportsTablet": false,
       "infoPlist": {
         "CFBundleDevelopmentRegion": "tr",
@@ -27,10 +27,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Etkinik, iş yerinde olup olmadığınızı göstermek ve iş yeri konumunu kaydetmek için konumunuzu kullanır.",
-          "locationAlwaysAndWhenInUsePermission": "Etkinik, uygulama kapalıyken iş yerinizden ayrıldığınızda size \"Çıkış yapmayı unutma\" hatırlatması gönderebilmek için konumunuzu kullanır. Konum bilgisi yalnızca telefonunuzda kalır, hiçbir yere gönderilmez.",
-          "locationAlwaysPermission": "Etkinik, uygulama kapalıyken iş yerinizden ayrıldığınızda size \"Çıkış yapmayı unutma\" hatırlatması gönderebilmek için konumunuzu kullanır. Konum bilgisi yalnızca telefonunuzda kalır, hiçbir yere gönderilmez.",
-          "motionUsagePermission": "Etkinik hareket verisi kullanmaz. Bu izin yalnızca konum kütüphanesinin bir parçası olduğu için listelenir.",
+          "locationWhenInUsePermission": "EtkinIK, iş yerinde olup olmadığınızı göstermek ve iş yeri konumunu kaydetmek için konumunuzu kullanır.",
+          "locationAlwaysAndWhenInUsePermission": "EtkinIK, uygulama arka plandayken iş yerinize vardığınızda ve ayrıldığınızda giriş/çıkış işlemini hatırlatmak için konumunuzu kullanır. Konum bilgisi yalnızca telefonunuzda kalır.",
+          "locationAlwaysPermission": "EtkinIK, uygulama arka plandayken iş yerinize vardığınızda ve ayrıldığınızda giriş/çıkış işlemini hatırlatmak için konumunuzu kullanır. Konum bilgisi yalnızca telefonunuzda kalır.",
+          "motionUsagePermission": "EtkinIK hareket verisi kullanmaz. Bu izin yalnızca konum kütüphanesinin bir parçası olduğu için listelenir.",
           "isIosBackgroundLocationEnabled": true
         }
       ],
